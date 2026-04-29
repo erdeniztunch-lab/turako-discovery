@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node scripts/dev-server.js)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:5173/Turako.html)",
+      "Bash(curl -s http://127.0.0.1:5173/screens/landing.jsx)",
+      "Bash(curl -s http://127.0.0.1:5173/screens/settings.jsx)",
+      "Bash(curl -s http://127.0.0.1:5173/screens/learnings.jsx)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:5173/screens/system.jsx)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:5173/components.jsx)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:5173/screens/signals.jsx)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:5173/screens/sources.jsx)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:5173/screens/home.jsx)"
+    ]
+  }
+}
