@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/Turako.html"
+    },
+    {
+      "source": "/((?!.*\\.).*)",
+      "destination": "/Turako.html"
+    }
+  ]
+}

@@ -498,6 +498,133 @@ function buildIntegrationImport(integrationId, existingSources) {
   return { alreadySynced: false, integration, source, signals };
 }
 
+function buildOnboardingDecisionBrief({ product, decisionIntent, evidenceText }) {
+  const now = Date.now();
+  const addedAt = new Date().toISOString().slice(0, 10);
+  const sourceId = `src-onboarding-${now}`;
+  const problemId = `prob-onboarding-${now}`;
+  const opportunityId = `opp-onboarding-${now}`;
+  const sourceText = evidenceText.trim();
+  const rawSignals = extractSignalsFromText(sourceText, sourceId);
+  const signals = rawSignals.map((signal) => ({ ...signal, problem: problemId }));
+  const lc = sourceText.toLowerCase();
+
+  const themes = [
+    {
+      id: "performance",
+      match: ["dashboard", "slow", "timeout", "load", "export", "report"],
+      title: "Reporting reliability is slowing product adoption",
+      missing: "Add product analytics from affected accounts to confirm frequency and revenue impact.",
+      action: "Validate a performance-focused fix before committing build capacity.",
+    },
+    {
+      id: "onboarding",
+      match: ["onboarding", "setup", "activation", "drop", "completion", "step"],
+      title: "Setup friction is blocking activation",
+      missing: "Add funnel data and session notes for the failing setup step.",
+      action: "Test the smallest onboarding change that removes the highest-friction step.",
+    },
+    {
+      id: "enterprise",
+      match: ["sso", "saml", "enterprise", "procurement", "security", "admin"],
+      title: "Enterprise readiness is creating deal risk",
+      missing: "Add CRM deal notes and lost-reason data before treating this as roadmap-critical.",
+      action: "Validate the enterprise requirement with sales and customer success evidence.",
+    },
+    {
+      id: "retention",
+      match: ["churn", "renewal", "retention", "cohort", "expansion", "risk"],
+      title: "Missing workflow depth may be increasing retention risk",
+      missing: "Add renewal notes and usage data to separate one-off requests from churn drivers.",
+      action: "Investigate whether this is a segment-specific retention problem.",
+    },
+  ];
+
+  const selectedTheme = themes.find((theme) => theme.match.some((word) => lc.includes(word))) || {
+    id: "general",
+    title: decisionIntent || "A customer problem needs clearer evidence",
+    missing: "Add one observed data point and one more customer source before making a roadmap call.",
+    action: "Collect a second source, then decide whether this problem deserves a product response.",
+  };
+
+  const observedCount = signals.filter((signal) => signal.type === "observed").length;
+  const strongCount = signals.filter((signal) => signal.strength === "strong").length;
+  const statedOnly = signals.length > 0 && signals.every((signal) => signal.type === "stated");
+  const thinEvidence = signals.length <= 1;
+  const confidenceHint = Math.min(92, Math.max(28, observedCount * 18 + strongCount * 14 + signals.length * 8));
+  const impact = strongCount > 0 ? 8 : observedCount > 0 ? 7 : 5;
+  const trend = lc.includes("week") || lc.includes("again") || lc.includes("recurring") || lc.includes("every") ? "rising" : "stable";
+
+  const problem = {
+    id: problemId,
+    title: selectedTheme.title,
+    summary: `Turako suggests this problem from the first evidence set: ${sourceText.slice(0, 150)}${sourceText.length > 150 ? "..." : ""}`,
+    trend,
+    impact,
+    addedAt,
+    opportunities: [opportunityId],
+  };
+
+  const opportunity = {
+    id: opportunityId,
+    title: selectedTheme.action,
+    framing: "Suggested by the onboarding decision brief. Treat this as a next move to validate, not an automatic roadmap decision.",
+    problem: problemId,
+    readiness: thinEvidence || statedOnly ? "validate" : "ready",
+    decision: null,
+  };
+
+  const source = {
+    id: sourceId,
+    title: "First evidence - onboarding brief",
+    flavor: observedCount > 0 ? "analytics" : "interview",
+    addedAt,
+    excerpt: sourceText.slice(0, 200),
+    signals: signals.map((signal) => signal.id),
+  };
+
+  const clusters = [
+    {
+      title: selectedTheme.title,
+      signalCount: signals.length,
+      confidence: confidenceHint,
+    },
+  ];
+
+  const riskyArea = thinEvidence
+    ? "Risk: thin evidence. This problem rests on a very small first sample."
+    : statedOnly
+      ? "Risk: stated-only evidence. Customers said it, but observed proof is still missing."
+      : "Risk: early evidence. The direction is promising, but Turako would still look for a second source.";
+
+  const workspace = {
+    product: {
+      name: product.name || "Untitled product",
+      description: product.description || "",
+      segments: product.segments || [],
+      focus: product.focus || decisionIntent || "",
+    },
+    sources: [source],
+    signals,
+    problems: [problem],
+    opportunities: [opportunity],
+    decisions: [],
+    learnings: [],
+  };
+
+  return {
+    decisionIntent,
+    source,
+    signals,
+    clusters,
+    strongestProblem: problem,
+    riskyArea,
+    missingEvidence: selectedTheme.missing,
+    nextAction: selectedTheme.action,
+    workspace,
+  };
+}
+
 Object.assign(window, {
   SAMPLE_WORKSPACE,
   EMPTY_WORKSPACE,
@@ -508,4 +635,5 @@ Object.assign(window, {
   buildRecommendation,
   detectBlindSpots,
   buildIntegrationImport,
+  buildOnboardingDecisionBrief,
 });

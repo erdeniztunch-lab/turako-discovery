@@ -175,20 +175,35 @@ const App = () => {
 
   if (stage === "onboarding") return (
     <>
-      <Onboarding onDone={(product, useSample) => {
-        if (useSample) {
+      <Onboarding onDone={(payload) => {
+        if (payload?.useSample) {
           setWs(SAMPLE_WORKSPACE);
           setIsSample(true);
           setIntegrations(DEFAULT_INTEGRATIONS);
           setDemoActive(true);
-        } else {
-          setWs({ ...EMPTY_WORKSPACE, product: { ...EMPTY_WORKSPACE.product, ...product } });
+          setTweak("useSample", true);
+          setStage("app");
+          setTimeout(() => setTourIdx(0), 400);
+          return;
+        }
+
+        if (payload?.workspace) {
+          setWs(payload.workspace);
           setIsSample(false);
           setIntegrations(DEFAULT_INTEGRATIONS);
           setDemoActive(false);
+          setTweak("useSample", false);
+          setRoute("home");
+          setStage("app");
+          return;
         }
+
+        setWs(EMPTY_WORKSPACE);
+        setIsSample(false);
+        setIntegrations(DEFAULT_INTEGRATIONS);
+        setDemoActive(false);
+        setTweak("useSample", false);
         setStage("app");
-        setTimeout(() => setTourIdx(0), 400);
       }} />
       <TweaksMount tweaks={tweaks} setTweak={setTweak} />
     </>
