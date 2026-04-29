@@ -1,36 +1,50 @@
-// Signals screen with linking modal
+// Signals screen - review AI-suggested clusters
 
 const SignalsView = ({ ws, setWs }) => {
   const [filter, setFilter] = React.useState("all");
-  const [linking, setLinking] = React.useState(null); // signal id
+  const [linking, setLinking] = React.useState(null);
   const [selected, setSelected] = React.useState(new Set());
 
-  const filtered = ws.signals.filter((s) => {
+  const isNeedsReview = (signal) => signal.review === "needs_review";
+  const isHighConfidence = (signal) => (signal.clusterConfidence || 0) >= 70;
+  const isNoisy = (signal) => signal.review === "noise" || (!signal.problem && signal.review !== "accepted");
+
+  const filtered = ws.signals.filter((signal) => {
     if (filter === "all") return true;
-    if (filter === "unlinked") return !s.problem;
-    if (filter === "observed") return s.type === "observed";
-    if (filter === "strong") return s.strength === "strong";
+    if (filter === "needs-review") return isNeedsReview(signal);
+    if (filter === "high-confidence") return isHighConfidence(signal);
+    if (filter === "noisy") return isNoisy(signal);
+    if (filter === "observed") return signal.type === "observed";
     return true;
   });
 
-  const linkOne = (signalId, problemId) => {
-    setWs({
-      ...ws,
-      signals: ws.signals.map((s) => s.id === signalId ? { ...s, problem: problemId } : s),
-    });
-    setLinking(null);
-  };
-
   const toggleSelect = (id) => {
-    const ns = new Set(selected);
-    if (ns.has(id)) ns.delete(id); else ns.add(id);
-    setSelected(ns);
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setSelected(next);
   };
 
-  const bulkLink = (problemId) => {
+  const acceptSignals = (ids) => {
     setWs({
       ...ws,
-      signals: ws.signals.map((s) => selected.has(s.id) ? { ...s, problem: problemId } : s),
+      signals: ws.signals.map((signal) => ids.has(signal.id) ? { ...signal, review: "accepted" } : signal),
+    });
+    setSelected(new Set());
+  };
+
+  const markNoise = (ids) => {
+    setWs({
+      ...ws,
+      signals: ws.signals.map((signal) => ids.has(signal.id) ? { ...signal, review: "noise", problem: null } : signal),
+    });
+    setSelected(new Set());
+  };
+
+  const moveSignals = (problemId) => {
+    const ids = linking === "__bulk__" ? selected : new Set([linking]);
+    setWs({
+      ...ws,
+      signals: ws.signals.map((signal) => ids.has(signal.id) ? { ...signal, problem: problemId, suggestedProblem: problemId, review: "accepted" } : signal),
     });
     setSelected(new Set());
     setLinking(null);
@@ -41,63 +55,69 @@ const SignalsView = ({ ws, setWs }) => {
       <div className="page-header">
         <div>
           <h1 className="page-title">Signals</h1>
-          <p className="page-sub">Review extracted evidence. Link signals to the problem they support.</p>
+          <p className="page-sub">Review AI-suggested clusters. Accept what looks right, move what is wrong, or mark noise.</p>
         </div>
         <div className="row-flex">
           {selected.size > 0 && (
-            <button className="btn primary sm" onClick={() => setLinking("__bulk__")}>
-              Link {selected.size} to problem
-            </button>
+            <>
+              <button className="btn primary sm" onClick={() => acceptSignals(selected)}>Accept suggestions</button>
+              <button className="btn sm" onClick={() => setLinking("__bulk__")}>Move</button>
+              <button className="btn danger sm" onClick={() => markNoise(selected)}>Mark noise</button>
+            </>
           )}
         </div>
       </div>
 
-      <div className="row-flex" style={{ gap: 6 }}>
+      <div className="row-flex" style={{ gap: 6, flexWrap: "wrap" }}>
         {[
           { id: "all", label: "All", count: ws.signals.length },
-          { id: "unlinked", label: "Unlinked", count: ws.signals.filter((s) => !s.problem).length },
-          { id: "observed", label: "Observed", count: ws.signals.filter((s) => s.type === "observed").length },
-          { id: "strong", label: "Strong", count: ws.signals.filter((s) => s.strength === "strong").length },
-        ].map((f) => (
-          <button key={f.id} className={`flavor-chip ${filter === f.id ? "active" : ""}`} onClick={() => setFilter(f.id)}>
-            {f.label} <span className="mono dim" style={{ fontSize: 11 }}>{f.count}</span>
+          { id: "needs-review", label: "Needs review", count: ws.signals.filter(isNeedsReview).length },
+          { id: "high-confidence", label: "High confidence", count: ws.signals.filter(isHighConfidence).length },
+          { id: "noisy", label: "Noisy", count: ws.signals.filter(isNoisy).length },
+          { id: "observed", label: "Observed", count: ws.signals.filter((signal) => signal.type === "observed").length },
+        ].map((item) => (
+          <button key={item.id} className={`flavor-chip ${filter === item.id ? "active" : ""}`} onClick={() => setFilter(item.id)}>
+            {item.label} <span className="mono dim" style={{ fontSize: 11 }}>{item.count}</span>
           </button>
         ))}
       </div>
 
       <div className="card flush">
         {filtered.length === 0 && <div className="empty">No signals match this filter.</div>}
-        {filtered.map((s) => {
-          const prob = ws.problems.find((p) => p.id === s.problem);
-          const src = ws.sources.find((x) => x.id === s.source);
+        {filtered.map((signal) => {
+          const problem = ws.problems.find((item) => item.id === signal.problem);
+          const source = ws.sources.find((item) => item.id === signal.source);
+          const rowIds = new Set([signal.id]);
           return (
-            <div key={s.id} className="row" onClick={() => toggleSelect(s.id)}>
+            <div key={signal.id} className="row" onClick={() => toggleSelect(signal.id)}>
               <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
                 <input
                   type="checkbox"
-                  checked={selected.has(s.id)}
-                  onChange={() => toggleSelect(s.id)}
-                  onClick={(e) => e.stopPropagation()}
+                  checked={selected.has(signal.id)}
+                  onChange={() => toggleSelect(signal.id)}
+                  onClick={(event) => event.stopPropagation()}
                   style={{ marginTop: 4, accentColor: "var(--accent)" }}
                 />
                 <div style={{ minWidth: 0 }}>
-                  <div className="row-title">{s.text}</div>
+                  <div className="row-title">{signal.text}</div>
                   <div className="row-sub" style={{ flexWrap: "wrap" }}>
-                    <StrengthTag strength={s.strength} />
-                    <span className="mono dim">{s.addedAt}</span>
-                    <span>·</span>
-                    <span className="dim">from {src?.title || "source"}</span>
+                    <StrengthTag strength={signal.strength} />
+                    <TypeTag type={signal.type} />
+                    <span className="mono dim">{source?.integrationName || source?.flavor || "source"}</span>
+                    {problem && <Tag kind="accent"><Icon name="link" size={11} /> {problem.title.slice(0, 34)}{problem.title.length > 34 ? "..." : ""}</Tag>}
+                    {signal.review === "needs_review" && <Tag kind="warn">needs review</Tag>}
+                    {signal.review === "accepted" && <Tag kind="accent">accepted</Tag>}
+                    {signal.review === "noise" && <Tag kind="danger">noise</Tag>}
+                    {(signal.clusterConfidence || 0) > 0 && <span className="mono dim">{signal.clusterConfidence} confidence</span>}
                   </div>
                 </div>
               </div>
-              <div className="row-flex">
-                {prob ? (
-                  <Tag kind="accent"><Icon name="link" size={11} /> {prob.title.slice(0, 36)}{prob.title.length > 36 ? "…" : ""}</Tag>
-                ) : (
-                  <button className="btn sm" onClick={(e) => { e.stopPropagation(); setLinking(s.id); }}>
-                    Link to problem
-                  </button>
+              <div className="row-flex" onClick={(event) => event.stopPropagation()}>
+                {signal.review !== "accepted" && problem && (
+                  <button className="btn primary sm" onClick={() => acceptSignals(rowIds)}>Accept</button>
                 )}
+                <button className="btn sm" onClick={() => setLinking(signal.id)}>Move</button>
+                <button className="btn ghost sm" onClick={() => markNoise(rowIds)}>Noise</button>
               </div>
             </div>
           );
@@ -109,10 +129,7 @@ const SignalsView = ({ ws, setWs }) => {
           ws={ws}
           setWs={setWs}
           onClose={() => setLinking(null)}
-          onPick={(probId) => {
-            if (linking === "__bulk__") bulkLink(probId);
-            else linkOne(linking, probId);
-          }}
+          onPick={moveSignals}
           bulk={linking === "__bulk__"}
         />
       )}

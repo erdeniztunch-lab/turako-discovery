@@ -42,18 +42,37 @@ const HomeView = ({ ws, setWs, setRoute, navigateTo, recommendation, blindSpots,
   }).slice(0, 2);
 
   const unlinkedCount = ws.signals.filter((s) => !s.problem).length;
+  const needsReviewCount = ws.signals.filter((s) => s.review === "needs_review").length;
+  const connectedStreams = new Set(ws.sources.filter((s) => s.integrationId).map((s) => s.integrationId)).size;
+  const risingProblems = ws.problems.filter((p) => p.trend === "rising").length;
   const staleDecisions = ws.decisions.filter((d) => {
     const days = (Date.now() - new Date(d.lastReview).getTime()) / 86400000;
     return days > 21;
   });
+  const strongestOpportunity = recommendation?.target?.type === "opportunity"
+    ? ws.opportunities.find((o) => o.id === recommendation.target.id)
+    : null;
+  const strongestProblem = strongestOpportunity
+    ? ws.problems.find((p) => p.id === strongestOpportunity.problem)
+    : recommendation?.target?.type === "problem"
+      ? ws.problems.find((p) => p.id === recommendation.target.id)
+      : null;
+  const strongestSignals = strongestProblem ? ws.signals.filter((s) => s.problem === strongestProblem.id) : [];
+  const analyticsSupport = strongestSignals.some((signal) => {
+    const source = ws.sources.find((item) => item.id === signal.source);
+    return source?.flavor === "analytics" || source?.integrationId === "ga";
+  }) ? "present" : "weak";
+  const sourceDiversity = new Set(strongestSignals.map((signal) => signal.source)).size;
 
-  const headingText = unlinkedCount > 0
-    ? `${unlinkedCount} signal${unlinkedCount > 1 ? "s" : ""} waiting to be linked`
+  const headingText = risingProblems > 0
+    ? `${risingProblems} problem cluster${risingProblems > 1 ? "s are" : " is"} rising`
+    : needsReviewCount > 0
+    ? `${needsReviewCount} new signal${needsReviewCount > 1 ? "s" : ""} need review`
     : staleDecisions.length > 0
     ? `${staleDecisions.length} decision${staleDecisions.length > 1 ? "s" : ""} need${staleDecisions.length === 1 ? "s" : ""} review`
     : totalSignals > 0
-    ? "You're up to date."
-    : "What should we build next?";
+    ? "Your decision surface is up to date."
+    : "Map your feedback streams";
 
   return (
     <div className="page wide">
@@ -62,13 +81,13 @@ const HomeView = ({ ws, setWs, setRoute, navigateTo, recommendation, blindSpots,
           <h1 className="page-title">{headingText}</h1>
           {totalSignals > 0 && (
             <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-              {unlinkedCount > 0 && (
+              {needsReviewCount > 0 && (
                 <button
                   onClick={() => setRoute("signals")}
                   style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 999, border: "1px solid var(--border)", background: "var(--accent-soft)", color: "var(--accent)", fontSize: 12, cursor: "pointer" }}
                 >
                   <Icon name="signal" size={11} />
-                  {unlinkedCount} unlinked signal{unlinkedCount > 1 ? "s" : ""}
+                  {needsReviewCount} signal{needsReviewCount > 1 ? "s" : ""} need review
                 </button>
               )}
               {staleDecisions.length > 0 && (
@@ -80,12 +99,21 @@ const HomeView = ({ ws, setWs, setRoute, navigateTo, recommendation, blindSpots,
                   {staleDecisions.length} stale decision{staleDecisions.length > 1 ? "s" : ""}
                 </button>
               )}
-              {unlinkedCount === 0 && staleDecisions.length === 0 && (
+              {needsReviewCount === 0 && staleDecisions.length === 0 && (
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 999, border: "1px solid var(--border)", color: "var(--text-muted)", fontSize: 12 }}>
                   <Icon name="check" size={11} />
                   All caught up
                 </span>
               )}
+            </div>
+          )}
+          {recommendation && (
+            <div className="decision-context-strip">
+              <span><strong>{totalSignals}</strong> signals reviewed</span>
+              <span><strong>{ws.problems.length}</strong> clusters detected</span>
+              <span><strong>{sourceDiversity || connectedStreams}</strong> streams involved</span>
+              <span><strong>{analyticsSupport}</strong> analytics support</span>
+              <span><strong>{strongestOpportunity?.title || recommendation.cta}</strong></span>
             </div>
           )}
         </div>
@@ -139,10 +167,10 @@ const HomeView = ({ ws, setWs, setRoute, navigateTo, recommendation, blindSpots,
             Start by pasting a customer note
           </h2>
           <p style={{ color: "var(--text-muted)", fontSize: 14, marginBottom: 28, lineHeight: 1.6 }}>
-            Turako extracts signals from it. You link them to problems and build evidence-backed decisions.
+            Preview feedback streams or paste a batch. Turako clusters incoming signals into decision-ready product problems.
           </p>
           <button className="btn primary lg" onClick={() => setRoute("capture")}>
-            Add your first source <Icon name="arrow-right" size={13} />
+            Map feedback streams <Icon name="arrow-right" size={13} />
           </button>
         </div>
       ) : (
@@ -201,7 +229,7 @@ const HomeView = ({ ws, setWs, setRoute, navigateTo, recommendation, blindSpots,
           ) : (
             <div className="card">
               <div className="empty">
-                No recommendations yet. Add sources and link signals to problems to get started.
+                No recommendations yet. Preview streams and review suggested clusters to get started.
               </div>
             </div>
           )}
@@ -288,11 +316,19 @@ const HomeView = ({ ws, setWs, setRoute, navigateTo, recommendation, blindSpots,
                     <span className="meta-value mono">{observedShare}%</span>
                   </div>
                   <div className="meta-row">
-                    <span className="meta-label">Linked to a problem</span>
+                    <span className="meta-label">Clustered signals</span>
                     <span className="meta-value mono">{linkedShare}%</span>
                   </div>
                   <div className="meta-row">
-                    <span className="meta-label">Sources</span>
+                    <span className="meta-label">Connected streams</span>
+                    <span className="meta-value mono">{connectedStreams}</span>
+                  </div>
+                  <div className="meta-row">
+                    <span className="meta-label">Needs review</span>
+                    <span className="meta-value mono">{needsReviewCount}</span>
+                  </div>
+                  <div className="meta-row">
+                    <span className="meta-label">Sources read</span>
                     <span className="meta-value mono">{ws.sources.length}</span>
                   </div>
                 </div>

@@ -272,6 +272,12 @@ const DEFAULT_INTEGRATIONS = {
   hubspot: { id: "hubspot", status: "disconnected", lastSync: null },
   zendesk: { id: "zendesk", status: "disconnected", lastSync: null },
   ga: { id: "ga", status: "disconnected", lastSync: null },
+  cs: { id: "cs", status: "disconnected", lastSync: null },
+  slack: { id: "slack", status: "disconnected", lastSync: null },
+  interviews: { id: "interviews", status: "disconnected", lastSync: null },
+  linear: { id: "linear", status: "disconnected", lastSync: null },
+  competitor: { id: "competitor", status: "disconnected", lastSync: null },
+  founder: { id: "founder", status: "disconnected", lastSync: null },
 };
 
 const INTEGRATION_CATALOG = [
@@ -304,6 +310,66 @@ const INTEGRATION_CATALOG = [
     sampleTitle: "Google Analytics sync - onboarding drop-off",
     sampleText:
       "Onboarding completion dropped from 61% to 49% after the new setup step shipped. Step 3 has the largest drop-off at 34%. Returning users spend 42% longer on the dashboard page when reports include more than 12 widgets.",
+  },
+  {
+    id: "cs",
+    name: "CS notes",
+    kind: "Customer success",
+    flavor: "support",
+    description: "Preview QBR notes, renewal risks, and account health themes as a continuous feedback stream.",
+    sampleTitle: "CS stream - QBR and renewal risks",
+    sampleText:
+      "Customer success notes flag three renewal accounts asking for faster reporting workflows. Two admins say weekly export cleanup is slowing their team. One QBR notes churn risk if onboarding remains confusing for new workspace admins.",
+  },
+  {
+    id: "slack",
+    name: "Slack threads",
+    kind: "Internal feedback",
+    flavor: "email",
+    description: "Simulate customer messages and internal escalation threads shared across the team.",
+    sampleTitle: "Slack stream - customer escalations",
+    sampleText:
+      "Sales shared a Slack thread where a founder asked for SSO before expansion. Support posted another thread about dashboard timeout complaints. Product marketing noted competitors are positioning faster setup as a differentiator.",
+  },
+  {
+    id: "interviews",
+    name: "Interviews",
+    kind: "Discovery notes",
+    flavor: "interview",
+    description: "Use example discovery notes to see how Turako separates stated needs from underlying problems.",
+    sampleTitle: "Interview stream - PM discovery notes",
+    sampleText:
+      "Three PMs said setup feels confusing because they do not know which events matter. One user requested templates, but the underlying problem seems to be low confidence during onboarding. Another PM still exports reports for weekly stakeholder updates.",
+  },
+  {
+    id: "linear",
+    name: "Linear / Jira",
+    kind: "Issue tracker",
+    flavor: "support",
+    description: "Preview recurring issue patterns and roadmap pressure from product and engineering queues.",
+    sampleTitle: "Issue stream - recurring requests",
+    sampleText:
+      "Linear has eight issues tagged dashboard reliability and five tagged onboarding confusion. Two bugs mention funnel timeout. Three roadmap requests ask for custom cohorts but only one includes customer context.",
+  },
+  {
+    id: "competitor",
+    name: "Competitor reviews",
+    kind: "Market signals",
+    flavor: "sales",
+    description: "Simulate market and competitor signals without treating them as direct customer proof.",
+    sampleTitle: "Market stream - competitor review notes",
+    sampleText:
+      "Competitor reviews praise fast dashboard loading and guided setup templates. Several reviews complain that advanced cohort building is hard. Sales says prospects compare us against tools with SSO in the base enterprise package.",
+  },
+  {
+    id: "founder",
+    name: "Founder DMs",
+    kind: "Direct customer messages",
+    flavor: "email",
+    description: "Preview high-signal but potentially biased founder and leadership customer conversations.",
+    sampleTitle: "Founder stream - direct customer DMs",
+    sampleText:
+      "A founder DM says a large prospect will not move forward without SSO. Another customer asked leadership for custom cohorts. One power user says dashboards are too slow for Friday reporting, but this is from a single account.",
   },
 ];
 
@@ -449,6 +515,7 @@ function detectBlindSpots(ws) {
       });
     }
     const types = new Set(linked.map((s) => s.type));
+    const sources = new Set(linked.map((s) => s.source));
     if (linked.length >= 2 && types.size === 1 && types.has("stated")) {
       out.push({
         id: `bs-stated-${p.id}`,
@@ -456,6 +523,16 @@ function detectBlindSpots(ws) {
         title: "Stated-only evidence",
         detail: `"${p.title}" has no observed proof.`,
         action: "Add observed evidence",
+        target: { type: "problem", id: p.id },
+      });
+    }
+    if (linked.length >= 2 && sources.size === 1) {
+      out.push({
+        id: `bs-stream-${p.id}`,
+        kind: "single-stream",
+        title: "Single-stream bias",
+        detail: `"${p.title}" is supported by one feedback stream only.`,
+        action: "Add another stream",
         target: { type: "problem", id: p.id },
       });
     }
@@ -498,131 +575,212 @@ function buildIntegrationImport(integrationId, existingSources) {
   return { alreadySynced: false, integration, source, signals };
 }
 
-function buildOnboardingDecisionBrief({ product, decisionIntent, evidenceText }) {
+const FEEDBACK_CLUSTER_THEMES = [
+  {
+    id: "performance",
+    match: ["dashboard", "slow", "timeout", "load", "export", "report", "widget"],
+    title: "Reporting reliability is slowing product adoption",
+    missing: "Add product analytics from affected accounts to confirm frequency and revenue impact.",
+    action: "Validate a performance-focused fix before committing build capacity.",
+  },
+  {
+    id: "onboarding",
+    match: ["onboarding", "setup", "activation", "drop", "completion", "step", "mapping"],
+    title: "Setup friction is blocking activation",
+    missing: "Add funnel data and session notes for the failing setup step.",
+    action: "Test the smallest onboarding change that removes the highest-friction step.",
+  },
+  {
+    id: "enterprise",
+    match: ["sso", "saml", "enterprise", "procurement", "security", "admin"],
+    title: "Enterprise readiness is creating deal risk",
+    missing: "Add CRM deal notes and lost-reason data before treating this as roadmap-critical.",
+    action: "Validate the enterprise requirement with sales and customer success evidence.",
+  },
+  {
+    id: "retention",
+    match: ["churn", "renewal", "retention", "cohort", "expansion", "risk"],
+    title: "Missing workflow depth may be increasing retention risk",
+    missing: "Add renewal notes and usage data to separate one-off requests from churn drivers.",
+    action: "Investigate whether this is a segment-specific retention problem.",
+  },
+  {
+    id: "feature-requests",
+    match: ["asked", "requested", "wants", "feature", "custom", "need"],
+    title: "Feature requests need priority filtering",
+    missing: "Add source diversity before turning these requests into roadmap commitments.",
+    action: "Separate recurring segment needs from one-off requests before building.",
+  },
+];
+
+function pickFeedbackTheme(text, fallbackId = "feature-requests") {
+  const lc = text.toLowerCase();
+  return FEEDBACK_CLUSTER_THEMES.find((theme) => theme.match.some((word) => lc.includes(word)))
+    || FEEDBACK_CLUSTER_THEMES.find((theme) => theme.id === fallbackId)
+    || FEEDBACK_CLUSTER_THEMES[0];
+}
+
+function buildFeedbackStreamMap({ product, selectedSourceIds = [], decisionPressure, manualEvidence = "" }) {
   const now = Date.now();
   const addedAt = new Date().toISOString().slice(0, 10);
-  const sourceId = `src-onboarding-${now}`;
-  const problemId = `prob-onboarding-${now}`;
-  const opportunityId = `opp-onboarding-${now}`;
-  const sourceText = evidenceText.trim();
-  const rawSignals = extractSignalsFromText(sourceText, sourceId);
-  const signals = rawSignals.map((signal) => ({ ...signal, problem: problemId }));
-  const lc = sourceText.toLowerCase();
-
-  const themes = [
-    {
-      id: "performance",
-      match: ["dashboard", "slow", "timeout", "load", "export", "report"],
-      title: "Reporting reliability is slowing product adoption",
-      missing: "Add product analytics from affected accounts to confirm frequency and revenue impact.",
-      action: "Validate a performance-focused fix before committing build capacity.",
-    },
-    {
-      id: "onboarding",
-      match: ["onboarding", "setup", "activation", "drop", "completion", "step"],
-      title: "Setup friction is blocking activation",
-      missing: "Add funnel data and session notes for the failing setup step.",
-      action: "Test the smallest onboarding change that removes the highest-friction step.",
-    },
-    {
-      id: "enterprise",
-      match: ["sso", "saml", "enterprise", "procurement", "security", "admin"],
-      title: "Enterprise readiness is creating deal risk",
-      missing: "Add CRM deal notes and lost-reason data before treating this as roadmap-critical.",
-      action: "Validate the enterprise requirement with sales and customer success evidence.",
-    },
-    {
-      id: "retention",
-      match: ["churn", "renewal", "retention", "cohort", "expansion", "risk"],
-      title: "Missing workflow depth may be increasing retention risk",
-      missing: "Add renewal notes and usage data to separate one-off requests from churn drivers.",
-      action: "Investigate whether this is a segment-specific retention problem.",
-    },
+  const sourceText = manualEvidence.trim();
+  const selectedIntegrations = INTEGRATION_CATALOG.filter((item) => selectedSourceIds.includes(item.id));
+  const evidenceItems = [
+    ...selectedIntegrations.map((integration) => ({
+      id: `src-onboarding-${integration.id}-${now}`,
+      title: `${integration.name} stream - first signal map`,
+      flavor: integration.flavor,
+      integrationId: integration.id,
+      integrationName: integration.name,
+      text: integration.sampleText,
+    })),
+    ...(sourceText ? [{
+      id: `src-onboarding-manual-${now}`,
+      title: "Manual batch - first signal map",
+      flavor: "interview",
+      text: sourceText,
+    }] : []),
   ];
+  const sources = evidenceItems.map((item) => {
+    const signalsForSource = extractSignalsFromText(item.text, item.id);
+    return {
+      source: {
+        id: item.id,
+        title: item.title,
+        flavor: item.flavor,
+        integrationId: item.integrationId,
+        integrationName: item.integrationName,
+        addedAt,
+        excerpt: item.text.slice(0, 200),
+        signals: signalsForSource.map((signal) => signal.id),
+      },
+      signals: signalsForSource,
+    };
+  });
+  const grouped = {};
+  sources.flatMap((item) => item.signals).forEach((signal) => {
+    const theme = pickFeedbackTheme(signal.text);
+    if (!grouped[theme.id]) grouped[theme.id] = { theme, signals: [] };
+    grouped[theme.id].signals.push(signal);
+  });
 
-  const selectedTheme = themes.find((theme) => theme.match.some((word) => lc.includes(word))) || {
-    id: "general",
-    title: decisionIntent || "A customer problem needs clearer evidence",
-    missing: "Add one observed data point and one more customer source before making a roadmap call.",
-    action: "Collect a second source, then decide whether this problem deserves a product response.",
-  };
+  const clusters = Object.values(grouped)
+    .sort((a, b) => b.signals.length - a.signals.length)
+    .slice(0, 4)
+    .map((group, index) => {
+      const problemId = `prob-stream-${group.theme.id}-${now}-${index}`;
+      const observedCount = group.signals.filter((signal) => signal.type === "observed").length;
+      const strongCount = group.signals.filter((signal) => signal.strength === "strong").length;
+      const sourceCount = new Set(group.signals.map((signal) => signal.source)).size;
+      const analyticsSignals = group.signals.filter((signal) => {
+        const source = sources.find((item) => item.source.id === signal.source)?.source;
+        return source?.flavor === "analytics" || source?.integrationId === "ga";
+      }).length;
+      const confidence = Math.min(94, Math.max(26, observedCount * 16 + strongCount * 14 + sourceCount * 10 + group.signals.length * 5));
+      const evidenceStrength = confidence >= 70 ? "High" : confidence >= 45 ? "Medium" : "Low";
+      const analyticsSupport = analyticsSignals > 0 ? "present" : "weak";
+      const customerDiversity = sourceCount >= 3 ? "broad" : sourceCount === 2 ? "mixed" : "narrow";
+      const risk = group.signals.length <= 1
+        ? "Thin evidence"
+        : sourceCount === 1
+          ? "Single-stream bias"
+          : observedCount === 0
+            ? "Missing observed proof"
+            : "Needs review";
+      return {
+        id: problemId,
+        theme: group.theme,
+        title: group.theme.title,
+        signalIds: group.signals.map((signal) => signal.id),
+        signalCount: group.signals.length,
+        sourceCount,
+        confidence,
+        evidenceStrength,
+        customerDiversity,
+        analyticsSupport,
+        risk,
+        missingEvidence: group.theme.missing,
+        nextAction: group.theme.action,
+      };
+    });
 
-  const observedCount = signals.filter((signal) => signal.type === "observed").length;
-  const strongCount = signals.filter((signal) => signal.strength === "strong").length;
-  const statedOnly = signals.length > 0 && signals.every((signal) => signal.type === "stated");
-  const thinEvidence = signals.length <= 1;
-  const confidenceHint = Math.min(92, Math.max(28, observedCount * 18 + strongCount * 14 + signals.length * 8));
-  const impact = strongCount > 0 ? 8 : observedCount > 0 ? 7 : 5;
-  const trend = lc.includes("week") || lc.includes("again") || lc.includes("recurring") || lc.includes("every") ? "rising" : "stable";
+  const strongest = clusters[0];
+  const signals = sources.flatMap((item) => item.signals).map((signal) => {
+    const cluster = clusters.find((item) => item.signalIds.includes(signal.id));
+    return {
+      ...signal,
+      problem: cluster?.id || null,
+      suggestedProblem: cluster?.id || null,
+      review: "needs_review",
+      clusterConfidence: cluster?.confidence || 0,
+    };
+  });
 
-  const problem = {
-    id: problemId,
-    title: selectedTheme.title,
-    summary: `Turako suggests this problem from the first evidence set: ${sourceText.slice(0, 150)}${sourceText.length > 150 ? "..." : ""}`,
-    trend,
-    impact,
+  const problems = clusters.map((cluster) => ({
+    id: cluster.id,
+    title: cluster.title,
+    summary: `Turako clustered ${cluster.signalCount} signal${cluster.signalCount !== 1 ? "s" : ""} across ${cluster.sourceCount} feedback stream${cluster.sourceCount !== 1 ? "s" : ""}. Risk: ${cluster.risk}.`,
+    trend: cluster.signalCount >= 2 || cluster.sourceCount > 1 ? "rising" : "stable",
+    impact: cluster.confidence >= 70 ? 8 : cluster.confidence >= 45 ? 6 : 5,
     addedAt,
-    opportunities: [opportunityId],
-  };
+    opportunities: strongest && cluster.id === strongest.id ? [`opp-stream-${now}`] : [],
+  }));
 
-  const opportunity = {
-    id: opportunityId,
-    title: selectedTheme.action,
-    framing: "Suggested by the onboarding decision brief. Treat this as a next move to validate, not an automatic roadmap decision.",
-    problem: problemId,
-    readiness: thinEvidence || statedOnly ? "validate" : "ready",
+  const opportunities = strongest ? [{
+    id: `opp-stream-${now}`,
+    title: strongest.nextAction,
+    framing: "Suggested from the first feedback stream map. Validate with the team before committing roadmap capacity.",
+    problem: strongest.id,
+    readiness: strongest.confidence >= 70 ? "ready" : "validate",
     decision: null,
-  };
-
-  const source = {
-    id: sourceId,
-    title: "First evidence - onboarding brief",
-    flavor: observedCount > 0 ? "analytics" : "interview",
-    addedAt,
-    excerpt: sourceText.slice(0, 200),
-    signals: signals.map((signal) => signal.id),
-  };
-
-  const clusters = [
-    {
-      title: selectedTheme.title,
-      signalCount: signals.length,
-      confidence: confidenceHint,
-    },
-  ];
-
-  const riskyArea = thinEvidence
-    ? "Risk: thin evidence. This problem rests on a very small first sample."
-    : statedOnly
-      ? "Risk: stated-only evidence. Customers said it, but observed proof is still missing."
-      : "Risk: early evidence. The direction is promising, but Turako would still look for a second source.";
+  }] : [];
 
   const workspace = {
     product: {
       name: product.name || "Untitled product",
       description: product.description || "",
       segments: product.segments || [],
-      focus: product.focus || decisionIntent || "",
+      focus: product.focus || decisionPressure || "",
     },
-    sources: [source],
+    sources: sources.map((item) => item.source),
     signals,
-    problems: [problem],
-    opportunities: [opportunity],
+    problems,
+    opportunities,
     decisions: [],
     learnings: [],
   };
 
+  const integrations = selectedSourceIds.reduce((acc, id) => {
+    acc[id] = { id, status: "synced", lastSync: addedAt };
+    return acc;
+  }, { ...DEFAULT_INTEGRATIONS });
+
   return {
-    decisionIntent,
-    source,
+    decisionPressure,
+    sources: workspace.sources,
     signals,
     clusters,
-    strongestProblem: problem,
-    riskyArea,
-    missingEvidence: selectedTheme.missing,
-    nextAction: selectedTheme.action,
+    strongestProblem: problems.find((problem) => problem.id === strongest?.id) || null,
+    riskyArea: clusters.filter((cluster) => cluster.risk !== "Needs review").length
+      ? `${clusters.filter((cluster) => cluster.risk !== "Needs review").length} noisy or thin area${clusters.filter((cluster) => cluster.risk !== "Needs review").length !== 1 ? "s" : ""} need review.`
+      : "The first map has enough diversity to start prioritizing, but the team should still review clusters.",
+    missingEvidence: strongest?.missingEvidence || "Add another feedback stream before making a roadmap call.",
+    nextAction: strongest?.nextAction || "Preview feedback streams before deciding what to build next.",
+    connectedSources: selectedIntegrations.map((item) => ({ id: item.id, name: item.name })),
+    manualIncluded: Boolean(sourceText),
+    sourceCount: workspace.sources.length,
+    integrations,
     workspace,
   };
+}
+
+function buildOnboardingDecisionBrief({ product, decisionIntent, evidenceText, selectedSourceIds = [] }) {
+  return buildFeedbackStreamMap({
+    product,
+    selectedSourceIds,
+    decisionPressure: decisionIntent,
+    manualEvidence: evidenceText,
+  });
 }
 
 Object.assign(window, {
@@ -635,5 +793,6 @@ Object.assign(window, {
   buildRecommendation,
   detectBlindSpots,
   buildIntegrationImport,
+  buildFeedbackStreamMap,
   buildOnboardingDecisionBrief,
 });

@@ -2,7 +2,7 @@
 
 const PRIMARY_NAV = [
   { id: "home", label: "Home", icon: "home" },
-  { id: "capture", label: "Capture", icon: "source", countKey: "sources" },
+  { id: "capture", label: "Sources", icon: "source", countKey: "sources" },
   { id: "problems", label: "Problems", icon: "problem", countKey: "problems" },
   { id: "decisions", label: "Decisions", icon: "decision", countKey: "decisions" },
 ];
@@ -71,7 +71,7 @@ const Sidebar = ({ route, setRoute, ws, onOpenSearch, isSample }) => (
 
 const Topbar = ({ route, onOpenSearch, onStartTour }) => {
   const labels = {
-    home: "Home", capture: "Capture", signals: "Signals", problems: "Problems",
+    home: "Home", capture: "Sources", signals: "Signals", problems: "Problems",
     opportunities: "Opportunities", decisions: "Decisions", learnings: "Learnings", settings: "Settings",
   };
   return (
@@ -152,10 +152,10 @@ const SearchModal = ({ ws, onClose, navigateTo }) => {
 };
 
 const TOUR_STEPS = [
-  { selector: '[data-tour="reco"]', title: "Home is the decision surface", body: "Turako starts with one recommended next move, backed by confidence, impact, and trend.", placement: "bottom", route: "home" },
-  { selector: '[data-tour="nav-capture"]', title: "Capture is your evidence inbox", body: "Paste a note, ticket batch, or analytics observation. Turako extracts signals and asks which problem they support.", placement: "right", route: "home" },
-  { selector: '[data-tour="integrations"]', title: "Connect your tools", body: "HubSpot, Zendesk, and Google Analytics are simulated here as frontend-only imports that feed the same signal pipeline.", placement: "bottom", route: "capture" },
-  { selector: '[data-tour="sidebar"]', title: "The loop stays traceable", body: "Capture → Problem → Decision. Each artifact is linked end-to-end so you can explain every call.", placement: "right", route: "home" },
+  { selector: '[data-tour="reco"]', title: "Home is the live decision surface", body: "Turako highlights rising clusters, review work, and the strongest next move from incoming feedback.", placement: "bottom", route: "home" },
+  { selector: '[data-tour="nav-capture"]', title: "Sources are your feedback streams", body: "Preview streams or paste batches. Turako clusters new signals instead of asking you to sort every note manually.", placement: "right", route: "home" },
+  { selector: '[data-tour="integrations"]', title: "Keep feedback flowing", body: "HubSpot, Zendesk, and Google Analytics are simulated here as frontend-only streams feeding the same signal map.", placement: "bottom", route: "capture" },
+  { selector: '[data-tour="sidebar"]', title: "The loop stays traceable", body: "Streams become signals, signals become problem clusters, and decisions keep their evidence trail.", placement: "right", route: "home" },
   { selector: '[data-tour="search"]', title: "Find and replay anytime", body: "Use search for any artifact. The help button replays this guide without touching your workspace data.", placement: "bottom", route: "home" },
 ];
 

@@ -124,19 +124,26 @@ const App = () => {
 
   const syncIntegration = (integrationId) => {
     const now = new Date().toISOString().slice(0, 10);
-    const imported = buildIntegrationImport(integrationId, ws.sources);
-    if (!imported) return;
+    const alreadySynced = ws.sources.some((source) => source.integrationId === integrationId);
+    const mapped = alreadySynced ? null : buildFeedbackStreamMap({
+      product: ws.product,
+      selectedSourceIds: [integrationId],
+      decisionPressure: ws.product.focus || "Roadmap prioritization",
+      manualEvidence: "",
+    });
 
     setIntegrations({
       ...integrations,
       [integrationId]: { id: integrationId, status: "synced", lastSync: now },
     });
 
-    if (imported.alreadySynced) return;
+    if (!mapped) return;
     setWs({
       ...ws,
-      sources: [imported.source, ...ws.sources],
-      signals: [...imported.signals, ...ws.signals],
+      sources: [...mapped.workspace.sources, ...ws.sources],
+      signals: [...mapped.workspace.signals, ...ws.signals],
+      problems: [...mapped.workspace.problems, ...ws.problems],
+      opportunities: [...mapped.workspace.opportunities, ...ws.opportunities],
     });
   };
 
@@ -190,7 +197,7 @@ const App = () => {
         if (payload?.workspace) {
           setWs(payload.workspace);
           setIsSample(false);
-          setIntegrations(DEFAULT_INTEGRATIONS);
+          setIntegrations(payload.integrations || DEFAULT_INTEGRATIONS);
           setDemoActive(false);
           setTweak("useSample", false);
           setRoute("home");

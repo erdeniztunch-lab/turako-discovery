@@ -1,4 +1,4 @@
-// Capture screen — paste-to-process-to-problem flow
+// Feedback streams screen - incoming evidence and suggested clustering
 
 const FLAVORS = [
   { id: "interview", label: "Interview" },
@@ -16,6 +16,18 @@ const EXAMPLES = {
   email: "Northwind asked again whether we plan to support custom cohorts. Their CSM noted they considered churning to a competitor in Q1.",
 };
 
+const STREAM_LABELS = {
+  hubspot: "Sales / CRM",
+  zendesk: "Support tickets",
+  ga: "Analytics",
+  cs: "CS notes",
+  slack: "Slack threads",
+  interviews: "Interviews",
+  linear: "Linear / Jira",
+  competitor: "Competitor reviews",
+  founder: "Founder / customer DMs",
+};
+
 const IntegrationPanel = ({ integrations, connectIntegration, syncIntegration }) => (
   <div className="integration-grid" data-tour="integrations">
     {INTEGRATION_CATALOG.map((item) => {
@@ -26,24 +38,24 @@ const IntegrationPanel = ({ integrations, connectIntegration, syncIntegration })
         <div key={item.id} className={`integration-card ${synced ? "synced" : ""}`}>
           <div className="integration-topline">
             <div>
-              <div className="integration-name">{item.name}</div>
+              <div className="integration-name">{STREAM_LABELS[item.id] || item.name}</div>
               <div className="integration-kind">{item.kind}</div>
             </div>
             <Tag kind={synced ? "accent" : connected ? "warn" : ""}>
-              {synced ? "synced" : connected ? "connected" : "disconnected"}
+              {synced ? "previewed" : connected ? "ready" : "example stream"}
             </Tag>
           </div>
           <p className="integration-copy">{item.description}</p>
           <div className="integration-actions">
             <button className="btn sm" disabled={connected} onClick={() => connectIntegration(item.id)}>
-              {connected ? "Connected" : "Connect"}
+              {connected ? "Preview ready" : "Connect later"}
             </button>
             <button className="btn primary sm" onClick={() => syncIntegration(item.id)}>
-              {synced ? "Sync again" : "Sync now"}
+              {synced ? "Preview again" : "Use example stream"}
             </button>
           </div>
           <div className="integration-foot mono">
-            {state.lastSync ? `Last sync ${state.lastSync}` : "Frontend-only mock import"}
+            {state.lastSync ? `Last sync ${state.lastSync}` : "Frontend-only stream preview"}
           </div>
         </div>
       );
@@ -53,69 +65,75 @@ const IntegrationPanel = ({ integrations, connectIntegration, syncIntegration })
 
 const CaptureView = ({ ws, setWs, navigateTo, integrations, connectIntegration, syncIntegration }) => {
   const [text, setText] = React.useState("");
-  const [flavor, setFlavor] = React.useState("interview");
+  const [flavor, setFlavor] = React.useState("support");
   const [showExample, setShowExample] = React.useState(false);
-  const [captured, setCaptured] = React.useState(null); // { signalCount, signalIds }
-  const [newProblemText, setNewProblemText] = React.useState("");
-  const [linked, setLinked] = React.useState(null); // problem title after linking
-  const [integrationsOpen, setIntegrationsOpen] = React.useState(false);
+  const [captured, setCaptured] = React.useState(null);
+  const [renames, setRenames] = React.useState({});
+  const [integrationsOpen, setIntegrationsOpen] = React.useState(true);
+
+  const connectedCount = Object.values(integrations).filter((item) => item.status === "connected" || item.status === "synced").length;
+  const needsReviewCount = ws.signals.filter((signal) => signal.review === "needs_review").length;
+  const noisyCount = ws.problems.filter((problem) => ws.signals.filter((signal) => signal.problem === problem.id).length <= 1).length;
+  const clusteredShare = ws.signals.length ? Math.round((ws.signals.filter((signal) => signal.problem).length / ws.signals.length) * 100) : 0;
 
   const process = () => {
     const trimmed = text.trim();
     if (!trimmed) return;
-    const sourceId = `src-${Date.now()}`;
-    const newSignals = extractSignalsFromText(trimmed, sourceId);
-    const newSource = {
-      id: sourceId,
-      title: `${flavor[0].toUpperCase() + flavor.slice(1)} note — ${new Date().toLocaleDateString()}`,
-      flavor,
-      addedAt: new Date().toISOString().slice(0, 10),
-      excerpt: trimmed.slice(0, 200),
-      signals: newSignals.map((s) => s.id),
-    };
+    const map = buildFeedbackStreamMap({
+      product: ws.product,
+      selectedSourceIds: [],
+      decisionPressure: ws.product.focus || "Roadmap prioritization",
+      manualEvidence: trimmed,
+    });
     setWs({
       ...ws,
-      sources: [newSource, ...ws.sources],
-      signals: [...newSignals, ...ws.signals],
+      sources: [...map.workspace.sources, ...ws.sources],
+      signals: [...map.workspace.signals, ...ws.signals],
+      problems: [...map.workspace.problems, ...ws.problems],
+      opportunities: [...map.workspace.opportunities, ...ws.opportunities],
     });
-    setCaptured({ signalCount: newSignals.length, signalIds: newSignals.map((s) => s.id) });
-    setLinked(null);
-    setNewProblemText("");
+    setCaptured(map);
     setText("");
   };
 
-  const linkToExisting = (problemId) => {
-    const problem = ws.problems.find((p) => p.id === problemId);
-    setWs({
-      ...ws,
-      signals: ws.signals.map((s) => captured.signalIds.includes(s.id) ? { ...s, problem: problemId } : s),
-    });
-    setLinked(problem.title);
+  const acceptCluster = (cluster) => {
+    setWs((current) => ({
+      ...current,
+      signals: current.signals.map((signal) => cluster.signalIds.includes(signal.id) ? { ...signal, review: "accepted" } : signal),
+    }));
   };
 
-  const linkToNew = () => {
-    if (!newProblemText.trim()) return;
-    const probId = `prob-${Date.now()}`;
-    const newProblem = {
-      id: probId,
-      title: newProblemText.trim(),
-      summary: "",
-      trend: "stable",
-      impact: 5,
-      opportunities: [],
-    };
-    setWs({
-      ...ws,
-      signals: ws.signals.map((s) => captured.signalIds.includes(s.id) ? { ...s, problem: probId } : s),
-      problems: [...ws.problems, newProblem],
-    });
-    setLinked(newProblemText.trim());
+  const renameCluster = (cluster) => {
+    const title = (renames[cluster.id] || "").trim();
+    if (!title) return;
+    setWs((current) => ({
+      ...current,
+      problems: current.problems.map((problem) => problem.id === cluster.id ? { ...problem, title } : problem),
+    }));
+    setCaptured((current) => current ? {
+      ...current,
+      clusters: current.clusters.map((item) => item.id === cluster.id ? { ...item, title } : item),
+    } : current);
+    setRenames((current) => ({ ...current, [cluster.id]: "" }));
   };
 
-  const dismiss = () => {
-    setCaptured(null);
-    setLinked(null);
-    setNewProblemText("");
+  const requestMoreEvidence = (cluster) => {
+    setWs((current) => ({
+      ...current,
+      problems: current.problems.map((problem) => problem.id === cluster.id ? {
+        ...problem,
+        summary: `${problem.summary} More evidence requested: ${cluster.missingEvidence}`,
+      } : problem),
+    }));
+  };
+
+  const acceptAllClusters = () => {
+    if (!captured) return;
+    const ids = new Set(captured.signals.map((signal) => signal.id));
+    setWs((current) => ({
+      ...current,
+      signals: current.signals.map((signal) => ids.has(signal.id) ? { ...signal, review: "accepted" } : signal),
+    }));
   };
 
   const useExample = () => {
@@ -123,169 +141,148 @@ const CaptureView = ({ ws, setWs, navigateTo, integrations, connectIntegration, 
     setShowExample(false);
   };
 
-  const renderMainCard = () => {
-    if (!captured) {
-      return (
-        <div className="card">
-          <div className="paste-area">
-            <textarea
-              className="paste-textarea"
-              placeholder="Paste raw notes, tickets, transcript snippets, or analytics observations…"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              data-tour="paste"
-            />
-            <div className="paste-toolbar">
-              <span className="section-label" style={{ marginRight: 8 }}>Type</span>
-              {FLAVORS.map((f) => (
-                <button
-                  key={f.id}
-                  className={`flavor-chip ${flavor === f.id ? "active" : ""}`}
-                  onClick={() => setFlavor(f.id)}
-                >
-                  {f.label}
-                </button>
-              ))}
-              <span className="spacer" />
-              <button className="btn ghost sm" onClick={() => setShowExample((v) => !v)}>
-                {showExample ? "Hide example" : "See example"}
-              </button>
-              <button className="btn primary" onClick={process} disabled={!text.trim()}>
-                Process <Icon name="arrow-right" size={13} />
-              </button>
-            </div>
-            {showExample && (
-              <div style={{ padding: "12px 14px", background: "var(--bg-elev-2)", borderRadius: "var(--radius)", fontSize: 13, color: "var(--text-muted)" }}>
-                <div className="section-label" style={{ marginBottom: 6 }}>Example for {flavor}</div>
-                "{EXAMPLES[flavor]}"
-                <button className="btn sm" style={{ marginTop: 10 }} onClick={useExample}>Use this</button>
-              </div>
-            )}
-          </div>
-        </div>
-      );
-    }
-
-    if (linked) {
-      return (
-        <div className="card" style={{ padding: "32px 24px", textAlign: "center" }}>
-          <div style={{ fontSize: 32, marginBottom: 14, color: "var(--accent)" }}>✓</div>
-          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
-            {captured.signalCount} signal{captured.signalCount !== 1 ? "s" : ""} linked to "{linked}"
-          </div>
-          <div className="muted" style={{ fontSize: 13, marginBottom: 24 }}>
-            They'll strengthen the confidence score as you add more evidence.
-          </div>
-          <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
-            <button className="btn primary" onClick={dismiss}>Capture another</button>
-            <button className="btn ghost" onClick={() => { dismiss(); navigateTo("problems"); }}>Go to Problems</button>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <div className="card" style={{ padding: 0 }}>
-        <div style={{ padding: "16px 16px 12px" }}>
-          <div className="section-label" style={{ marginBottom: 4 }}>
-            +{captured.signalCount} signal{captured.signalCount !== 1 ? "s" : ""} extracted
-          </div>
-          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Which problem does this support?</div>
-          <div className="muted" style={{ fontSize: 13 }}>All signals will be linked to the problem you pick.</div>
-        </div>
-
-        <div style={{ maxHeight: 260, overflowY: "auto", borderTop: "1px solid var(--border)" }}>
-          {ws.problems.length === 0 && (
-            <div className="empty">No problems yet — create one below.</div>
-          )}
-          {ws.problems.map((p) => (
-            <div
-              key={p.id}
-              className="row"
-              style={{ cursor: "pointer" }}
-              onClick={() => linkToExisting(p.id)}
-            >
-              <div>
-                <div className="row-title">{p.title}</div>
-                <div className="row-sub">
-                  <span className="mono dim">{ws.signals.filter((s) => s.problem === p.id).length} signals</span>
-                </div>
-              </div>
-              <Icon name="arrow-right" size={13} />
-            </div>
-          ))}
-        </div>
-
-        <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border)", display: "flex", gap: 8 }}>
-          <input
-            autoFocus={ws.problems.length === 0}
-            placeholder="New problem…"
-            value={newProblemText}
-            onChange={(e) => setNewProblemText(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && newProblemText.trim()) linkToNew(); }}
-            style={{ flex: 1, padding: "8px 12px", background: "var(--bg-elev-2)", border: "1px solid var(--border)", borderRadius: "var(--radius)", fontSize: 13 }}
-          />
-          <button className="btn primary sm" disabled={!newProblemText.trim()} onClick={linkToNew}>Create</button>
-        </div>
-
-        <div style={{ padding: "0 16px 14px" }}>
-          <button className="btn ghost sm" onClick={dismiss}>Not sure yet</button>
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div className="page" data-tour="sources">
       <div className="page-header">
         <div>
-          <h1 className="page-title">Capture</h1>
-          <p className="page-sub">Paste a note, interview, ticket batch, or analytics observation. Turako extracts the signals.</p>
+          <h1 className="page-title">Incoming feedback stream review</h1>
+          <p className="page-sub">Review incoming signals, suggested problem clusters, noisy areas, missing evidence, and PM actions.</p>
         </div>
       </div>
 
-      {renderMainCard()}
+      <div className="grid cols-3">
+        <div className="card stream-stat">
+          <span className="meta-label">Connected streams</span>
+          <strong className="mono">{connectedCount}</strong>
+        </div>
+        <div className="card stream-stat">
+          <span className="meta-label">Needs review</span>
+          <strong className="mono">{needsReviewCount}</strong>
+        </div>
+        <div className="card stream-stat">
+          <span className="meta-label">Clustered signals</span>
+          <strong className="mono">{clusteredShare}%</strong>
+        </div>
+      </div>
 
       <div className="card flush">
-        <div
-          className="card-header"
-          style={{ cursor: "pointer" }}
-          onClick={() => setIntegrationsOpen((v) => !v)}
-        >
-          <h3 className="card-title">Connect tools</h3>
-          <span className="mono dim" style={{ fontSize: 11 }}>{integrationsOpen ? "▲" : "▼"}</span>
+        <div className="card-header" style={{ cursor: "pointer" }} onClick={() => setIntegrationsOpen((value) => !value)}>
+          <h3 className="card-title">Feedback stream previews</h3>
+          <span className="mono dim" style={{ fontSize: 11 }}>{integrationsOpen ? "open" : "closed"}</span>
         </div>
         {integrationsOpen && (
           <div style={{ padding: "0 16px 16px" }}>
-            <IntegrationPanel
-              integrations={integrations}
-              connectIntegration={connectIntegration}
-              syncIntegration={syncIntegration}
-            />
+            <IntegrationPanel integrations={integrations} connectIntegration={connectIntegration} syncIntegration={syncIntegration} />
           </div>
         )}
       </div>
 
+      <div className="card">
+        <div className="card-kicker">Manual batch</div>
+        <div className="paste-area">
+          <textarea
+            className="paste-textarea"
+            placeholder="Paste a few customer notes, tickets, or Slack threads..."
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            data-tour="paste"
+          />
+          <div className="paste-toolbar">
+            <span className="section-label" style={{ marginRight: 8 }}>Batch type</span>
+            {FLAVORS.map((item) => (
+              <button key={item.id} className={`flavor-chip ${flavor === item.id ? "active" : ""}`} onClick={() => setFlavor(item.id)}>
+                {item.label}
+              </button>
+            ))}
+            <span className="spacer" />
+            <button className="btn ghost sm" onClick={() => setShowExample((value) => !value)}>
+              {showExample ? "Hide example" : "See example"}
+            </button>
+            <button className="btn primary" onClick={process} disabled={!text.trim()}>
+              Cluster batch <Icon name="arrow-right" size={13} />
+            </button>
+          </div>
+          {showExample && (
+            <div style={{ padding: "12px 14px", background: "var(--bg-elev-2)", borderRadius: "var(--radius)", fontSize: 13, color: "var(--text-muted)" }}>
+              <div className="section-label" style={{ marginBottom: 6 }}>Example for {flavor}</div>
+              "{EXAMPLES[flavor]}"
+              <button className="btn sm" style={{ marginTop: 10 }} onClick={useExample}>Use this</button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {captured && (
+        <div className="card flush">
+          <div className="card-header">
+            <h3 className="card-title">Problem map <span className="muted-count">{captured.clusters.length}</span></h3>
+            <div className="row-flex">
+              <button className="btn primary sm" onClick={acceptAllClusters}>Accept all</button>
+              <button className="btn sm" onClick={() => navigateTo("signals")}>Review in Signals</button>
+              <button className="btn ghost sm" onClick={() => setCaptured(null)}>Dismiss</button>
+            </div>
+          </div>
+          <div className="aha-strip">This is not a feature request list. This is a problem map with evidence strength.</div>
+          {captured.clusters.map((cluster) => (
+            <div key={cluster.id} className="problem-cluster-card">
+              <div className="problem-cluster-main">
+                <div className="row-title">{cluster.title}</div>
+                <div className="row-sub" style={{ flexWrap: "wrap" }}>
+                  <Tag kind={cluster.evidenceStrength === "High" ? "accent" : cluster.evidenceStrength === "Low" ? "danger" : "warn"}>{cluster.evidenceStrength} evidence</Tag>
+                  <span className="mono dim">{cluster.signalCount} signals</span>
+                  <span>|</span>
+                  <span className="mono dim">{cluster.sourceCount} streams</span>
+                  <span>|</span>
+                  <span className="mono dim">diversity {cluster.customerDiversity}</span>
+                  <span>|</span>
+                  <span className="mono dim">analytics {cluster.analyticsSupport}</span>
+                  <span>|</span>
+                  <Tag kind={cluster.risk === "Needs review" ? "" : "warn"}>{cluster.risk}</Tag>
+                </div>
+                <div className="cluster-test-line">
+                  <span className="meta-label">Suggested cheap test</span>
+                  <span>{cluster.nextAction}</span>
+                </div>
+                <div className="cluster-controls">
+                  <input
+                    value={renames[cluster.id] || ""}
+                    onChange={(event) => setRenames((current) => ({ ...current, [cluster.id]: event.target.value }))}
+                    placeholder="Rename cluster..."
+                    className="cluster-rename-input"
+                  />
+                  <button className="btn sm" disabled={!(renames[cluster.id] || "").trim()} onClick={() => renameCluster(cluster)}>Rename</button>
+                </div>
+              </div>
+              <div className="cluster-actions">
+                <button className="btn primary sm" onClick={() => acceptCluster(cluster)}>Accept suggestion</button>
+                <button className="btn sm" onClick={() => requestMoreEvidence(cluster)}>Request more evidence</button>
+                <button className="btn sm" onClick={() => navigateTo("signals")}>Move signal</button>
+                <button className="btn sm" onClick={() => navigateTo("opportunities", captured.workspace.opportunities[0]?.id)}>Create decision brief</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="card flush">
         <div className="card-header">
           <h3 className="card-title">All sources <span className="muted-count">{ws.sources.length}</span></h3>
+          {noisyCount > 0 && <Tag kind="warn">{noisyCount} noisy areas</Tag>}
         </div>
-        {ws.sources.length === 0 && (
-          <div className="empty">No sources yet. Paste your first one above.</div>
-        )}
-        {ws.sources.map((s) => (
-          <div key={s.id} className="row">
+        {ws.sources.length === 0 && <div className="empty">No sources yet. Preview a stream or paste your first feedback batch above.</div>}
+        {ws.sources.map((source) => (
+          <div key={source.id} className="row">
             <div>
-              <div className="row-title">{s.title}</div>
+              <div className="row-title">{source.title}</div>
               <div className="row-sub">
-                <Tag>{s.flavor}</Tag>
-                {s.integrationName && <Tag kind="accent">{s.integrationName}</Tag>}
-                <span className="mono dim">{s.addedAt}</span>
-                <span>·</span>
-                <span className="mono dim">{ws.signals.filter((sig) => sig.source === s.id).length} signals</span>
+                <Tag>{source.flavor}</Tag>
+                {source.integrationName && <Tag kind="accent">{source.integrationName}</Tag>}
+                <span className="mono dim">{source.addedAt}</span>
+                <span>|</span>
+                <span className="mono dim">{ws.signals.filter((signal) => signal.source === source.id).length} signals</span>
               </div>
               <div style={{ marginTop: 6, color: "var(--text-muted)", fontSize: 12, maxWidth: 720, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {s.excerpt}
+                {source.excerpt}
               </div>
             </div>
           </div>
